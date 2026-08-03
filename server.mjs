@@ -27,8 +27,10 @@ createServer(async (req, res) => {
     res.write(': connected\n\n');
     const client = { roomId, res }; clients.add(client);
     const state = rooms.get(roomId);
-    if (state?.location) res.write(`data: ${JSON.stringify({type:'location', point:state.location})}\n\n`);
-    if (state?.destination) res.write(`data: ${JSON.stringify({type:'destination', point:state.destination})}\n\n`);
+    res.write(`data: ${JSON.stringify({type:'share-status', active:!!state?.sharing})}\n\n`);
+    if (state?.pickup) res.write(`data: ${JSON.stringify({type:'pickup', point:state.pickup})}\n\n`);
+    if (state?.dropoff) res.write(`data: ${JSON.stringify({type:'dropoff', point:state.dropoff})}\n\n`);
+    if (state?.sharing && state?.location) res.write(`data: ${JSON.stringify({type:'location', point:state.location})}\n\n`);
     req.on('close', () => clients.delete(client));
     return;
   }
@@ -40,14 +42,18 @@ createServer(async (req, res) => {
       try {
         const event = JSON.parse(body);
         const roomId = safeRoom(event.roomId);
-        if (!roomId || !['location','destination'].includes(event.type) || !Number.isFinite(event.point?.lat) || !Number.isFinite(event.point?.lon)) {
+        const pointEvent = ['location','pickup','dropoff'].includes(event.type);
+        const statusEvent = event.type === 'share-status' && typeof event.active === 'boolean';
+        if (!roomId || (!pointEvent && !statusEvent) || (pointEvent && (!Number.isFinite(event.point?.lat) || !Number.isFinite(event.point?.lon)))) {
           res.writeHead(400, {'content-type':'application/json'}).end(JSON.stringify({error:'invalid event'})); return;
         }
         const state = rooms.get(roomId) || {};
         if (event.type === 'location') state.location = event.point;
-        if (event.type === 'destination') state.destination = event.point;
+        if (event.type === 'pickup') state.pickup = event.point;
+        if (event.type === 'dropoff') state.dropoff = event.point;
+        if (event.type === 'share-status') state.sharing = event.active;
         rooms.set(roomId, state);
-        broadcast(roomId, { type:event.type, point:event.point });
+        broadcast(roomId, event.type === 'share-status' ? { type:event.type, active:event.active } : { type:event.type, point:event.point });
         res.writeHead(204).end();
       } catch { res.writeHead(400).end('invalid json'); }
     });

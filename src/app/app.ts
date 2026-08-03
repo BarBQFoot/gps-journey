@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { createClient, RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import { environment } from '../environments/environment';
 
 declare global { interface Window { longdo: any; } }
@@ -42,7 +43,8 @@ export class App implements OnDestroy {
   private watchId?: number;
   private startedAt?: number;
   private clock?: number;
-  private events?: EventSource;
+  private readonly supabase: SupabaseClient = createClient(environment.supabaseUrl, environment.supabasePublishableKey);
+  private roomChannel?: RealtimeChannel;
 
   loadMap() {
     if (!this.roomId.trim()) {
@@ -206,30 +208,49 @@ export class App implements OnDestroy {
     return this.pickup() && this.destination() ? this.haversine(this.pickup()!, this.destination()!) : 0;
   }
 
-  private connectRoom() {
-    this.events?.close();
-    this.events = new EventSource(`/api/events?roomId=${encodeURIComponent(this.roomId.trim())}`);
-    this.events.onopen = () => this.gpsStatus.set(this.role === 'driver' ? 'เชื่อมต่อห้องแล้ว พร้อมแชร์ตำแหน่ง' : 'เข้าห้องแล้ว กำลังรอตำแหน่งคนขับ');
-    this.events.onmessage = event => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'share-status') {
-          this.driverSharing.set(!!data.active);
-          if (this.role === 'passenger') {
-            this.gpsStatus.set(data.active ? 'คนขับเริ่มแชร์ตำแหน่งแล้ว' : 'กำลังรอคนขับกดแชร์ตำแหน่ง');
-            if (!data.active && this.userMarker) {
-              this.map.Overlays.remove(this.userMarker);
-              this.userMarker = undefined;
-              this.current.set(null);
-            }
-          }
+  private async connectRoom() {
+    if (this.roomChannel) await this.supabase.removeChannel(this.roomChannel);
+    const room = this.roomId.trim().toUpperCase();
+
+    const { data, error } = await this.supabase.from('trip_rooms').select('*').eq('room_id', room).maybeSingle();
+    if (error) {
+      this.gpsStatus.set(`เชื่อมต่อห้องไม่สำเร็จ: ${error.message}`);
+      return;
+    }
+    if (data) this.applyRoomState(data);
+
+    this.roomChannel = this.supabase
+      .channel(`trip-room-${room}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_rooms', filter: `room_id=eq.${room}` }, payload => {
+        if (payload.new && Object.keys(payload.new).length) this.applyRoomState(payload.new);
+      })
+      .subscribe(status => {
+        if (status === 'SUBSCRIBED') {
+          this.gpsStatus.set(this.role === 'driver' ? 'เชื่อมต่อห้องแล้ว พร้อมแชร์ตำแหน่ง' : this.driverSharing() ? 'คนขับกำลังแชร์ตำแหน่ง' : 'เข้าห้องแล้ว กำลังรอคนขับ');
         }
-        if (data.type === 'location' && this.role === 'passenger' && this.driverSharing()) this.recordRemote(data.point);
-        if (data.type === 'pickup' && data.point) this.setPickup(data.point, false);
-        if ((data.type === 'dropoff' || data.type === 'destination') && data.point) this.setDestination(data.point, false);
-      } catch { /* ignore malformed room events */ }
-    };
-    this.events.onerror = () => this.gpsStatus.set('การเชื่อมต่อขาดหาย ระบบกำลังลองใหม่');
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') this.gpsStatus.set('Realtime ขาดการเชื่อมต่อ ระบบกำลังลองใหม่');
+      });
+  }
+
+  private applyRoomState(row: any) {
+    const sharing = !!row.sharing;
+    this.driverSharing.set(sharing);
+    const pickup = Number.isFinite(row.pickup_lat) && Number.isFinite(row.pickup_lon) ? { lat: row.pickup_lat, lon: row.pickup_lon } : null;
+    const dropoff = Number.isFinite(row.dropoff_lat) && Number.isFinite(row.dropoff_lon) ? { lat: row.dropoff_lat, lon: row.dropoff_lon } : null;
+
+    if (pickup && (!this.pickup() || this.haversine(this.pickup()!, pickup) > 0.001)) this.setPickup(pickup, false);
+    if (dropoff && (!this.destination() || this.haversine(this.destination()!, dropoff) > 0.001)) this.setDestination(dropoff, false);
+
+    if (this.role === 'passenger') {
+      if (sharing && Number.isFinite(row.driver_lat) && Number.isFinite(row.driver_lon)) {
+        this.recordRemote({ lat: row.driver_lat, lon: row.driver_lon, time: Date.parse(row.updated_at) });
+      } else {
+        this.gpsStatus.set('กำลังรอคนขับกดแชร์ตำแหน่ง');
+        if (this.userMarker) this.map.Overlays.remove(this.userMarker);
+        this.userMarker = undefined;
+        this.current.set(null);
+      }
+    }
   }
 
   private recordRemote(point: Point) {
@@ -243,11 +264,14 @@ export class App implements OnDestroy {
     if (this.map) this.map.location(point, true);
   }
 
-  private sendRoomEvent(payload: any) {
-    fetch('/api/room-event', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ roomId: this.roomId.trim(), ...payload })
-    }).catch(() => this.gpsStatus.set('ส่งข้อมูลเข้าห้องไม่สำเร็จ'));
+  private async sendRoomEvent(payload: any) {
+    const row: any = { room_id: this.roomId.trim().toUpperCase(), updated_at: new Date().toISOString() };
+    if (payload.type === 'pickup') Object.assign(row, { pickup_lat: payload.point.lat, pickup_lon: payload.point.lon });
+    if (payload.type === 'dropoff') Object.assign(row, { dropoff_lat: payload.point.lat, dropoff_lon: payload.point.lon });
+    if (payload.type === 'location') Object.assign(row, { driver_lat: payload.point.lat, driver_lon: payload.point.lon });
+    if (payload.type === 'share-status') row.sharing = payload.active;
+    const { error } = await this.supabase.from('trip_rooms').upsert(row, { onConflict: 'room_id' });
+    if (error) this.gpsStatus.set(`ส่งข้อมูลเข้าห้องไม่สำเร็จ: ${error.message}`);
   }
 
   private record(point: Point) {
@@ -300,5 +324,5 @@ export class App implements OnDestroy {
   private pathDistance(points: Point[]) { return points.slice(1).reduce((n, p, i) => n + this.haversine(points[i], p), 0); }
   private haversine(a: Point, b: Point) { const r=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLon=(b.lon-a.lon)*Math.PI/180; const q=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLon/2)**2; return 2*r*Math.asin(Math.sqrt(q)); }
   private geoError(e: GeolocationPositionError) { return e.code === 1 ? 'กรุณาอนุญาตให้เว็บไซต์เข้าถึงตำแหน่ง' : e.code === 2 ? 'ไม่พบสัญญาณ GPS' : 'ใช้เวลาหาตำแหน่งนานเกินไป ลองอีกครั้ง'; }
-  ngOnDestroy() { if (this.tracking()) this.stopTracking(false); this.events?.close(); }
+  ngOnDestroy() { if (this.tracking()) this.stopTracking(false); if (this.roomChannel) this.supabase.removeChannel(this.roomChannel); }
 }

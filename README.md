@@ -23,6 +23,6 @@
 2. เปิดเซิร์ฟเวอร์: `npm run serve:prod`
 3. เปิด `http://localhost:3000` (บนมือถือควรใช้ HTTPS ผ่าน tunnel)
 
-Longdo Map API Key ตั้งค่าไว้ที่ `src/environments/environment.ts` ส่วนประวัติ 10 ทริปล่าสุดเก็บใน localStorage ของอุปกรณ์นั้น ข้อมูลสดแยกตามเลข ID ห้องผ่าน SSE และสถานะห้องอยู่ในหน่วยความจำของ Node.js
+Longdo Map API Key และ Supabase Publishable Key ตั้งค่าไว้ที่ `src/environments/environment.ts` ส่วนประวัติ 10 ทริปล่าสุดเก็บใน localStorage ของอุปกรณ์นั้น ข้อมูลสดแยกตามเลข ID ห้องและส่งข้ามเครื่องผ่าน Supabase Realtime จึงใช้งานบน Vercel ได้
 
 > การใช้ GPS บนมือถือผ่านเว็บต้องเป็น HTTPS และเบราว์เซอร์อาจหยุดติดตามเมื่อดับหน้าจอ

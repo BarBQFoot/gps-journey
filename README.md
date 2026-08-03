@@ -11,7 +11,15 @@
 
 ## เริ่มใช้งาน
 
-1. ติดตั้งและ build: `npm install` แล้ว `npm run build`
+### ทดลองระหว่างพัฒนา
+
+1. ติดตั้ง: `npm install`
+2. เปิดเว็บและ API พร้อมกัน: `npm start`
+3. เปิด `http://localhost:4200`
+
+### เปิดเวอร์ชัน build
+
+1. Build: `npm run build`
 2. เปิดเซิร์ฟเวอร์: `npm run serve:prod`
 3. เปิด `http://localhost:3000` (บนมือถือควรใช้ HTTPS ผ่าน tunnel)
 

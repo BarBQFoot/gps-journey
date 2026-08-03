@@ -66,6 +66,10 @@ createServer(async (req, res) => {
     if ((await stat(file)).isDirectory()) file = join(file, 'index.html');
     res.writeHead(200, {'content-type':types[extname(file)] || 'application/octet-stream'}).end(await readFile(file));
   } catch {
-    res.writeHead(200, {'content-type':'text/html; charset=utf-8'}).end(await readFile(join(root, 'index.html')));
+    try {
+      res.writeHead(200, {'content-type':'text/html; charset=utf-8'}).end(await readFile(join(root, 'index.html')));
+    } catch {
+      res.writeHead(404, {'content-type':'application/json; charset=utf-8'}).end(JSON.stringify({error:'not found'}));
+    }
   }
 }).listen(port, () => console.log(`GPS Journey: http://localhost:${port}`));

@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "scripts": {
     "ng": "ng",
-    "start": "ng serve",
+    "start": "node dev.mjs",
+    "start:web": "ng serve --proxy-config proxy.conf.json",
+    "start:api": "node server.mjs",
     "serve:prod": "node server.mjs",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",

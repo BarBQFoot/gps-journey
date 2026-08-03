@@ -63,7 +63,7 @@
         @if (role === 'driver' && !tracking()) { <button class="primary" (click)="startTracking()"><span>●</span> เริ่มแชร์และบันทึก</button> }
         @if (role === 'driver' && tracking()) { <button class="stop" (click)="stopTracking()"><span>■</span> หยุดและบันทึก</button> }
         @if (role === 'passenger') { <div class="watching" [class.waiting]="!driverSharing()"><i></i> {{ driverSharing() ? 'กำลังดูตำแหน่งคนขับ' : 'รอคนขับกดแชร์' }}</div> }
-        <button class="secondary" (click)="clearTrip()">ล้างเส้นทาง</button>
+        @if (role === 'driver') { <button class="secondary" [disabled]="clearingRoute()" (click)="clearTrip()">{{ clearingRoute() ? 'กำลังล้าง…' : 'ล้างจุดรับ–ส่ง' }}</button> }
       </div>
 
       <div class="history">

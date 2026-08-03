@@ -24,10 +24,12 @@ export class App implements OnDestroy {
   gpsStatus = signal('ยังไม่ได้เริ่มจับตำแหน่ง');
   pickup = signal<Point | null>(null);
   destination = signal<Point | null>(null);
+  selfLocation = signal<Point | null>(null);
   markMode = signal<'pickup' | 'dropoff' | null>(null);
   driverSharing = signal(false);
   roadDistance = signal('—');
   routeCalculating = signal(false);
+  clearingRoute = signal(false);
   current = signal<Point | null>(null);
   points = signal<Point[]>([]);
   distanceKm = signal(0);
@@ -36,6 +38,7 @@ export class App implements OnDestroy {
 
   private map: any;
   private userMarker: any;
+  private selfMarker: any;
   private pickupMarker: any;
   private destinationMarker: any;
   private trackLine: any;
@@ -79,6 +82,7 @@ export class App implements OnDestroy {
           this.routeCalculating.set(false);
         });
         this.connectRoom();
+        if (this.role === 'passenger') setTimeout(() => this.locateMe());
       });
       this.map.Event.bind('click', () => this.handleMapClick());
     });
@@ -88,8 +92,9 @@ export class App implements OnDestroy {
     navigator.geolocation.getCurrentPosition(
       p => {
         const point = this.fromPosition(p);
-        this.current.set(point);
-        this.renderUser(point);
+        this.selfLocation.set(point);
+        if (this.role === 'driver') this.current.set(point);
+        this.renderSelf(point);
         this.map.location(point, true);
         this.gpsStatus.set(`พบตำแหน่งแล้ว ±${Math.round(p.coords.accuracy)} ม.`);
       },
@@ -181,12 +186,44 @@ export class App implements OnDestroy {
     }
   }
 
-  clearTrip() {
+  async clearTrip() {
+    if (this.role !== 'driver' || this.clearingRoute()) return;
+    this.clearingRoute.set(true);
     if (this.tracking()) this.stopTracking(false);
     this.points.set([]); this.distanceKm.set(0); this.durationText.set('00:00:00');
     if (this.trackLine) this.map.Overlays.remove(this.trackLine);
     this.trackLine = undefined;
-    this.gpsStatus.set('ล้างเส้นทางแล้ว');
+    this.clearRoutePoints();
+    const { error } = await this.supabase
+      .from('trip_rooms')
+      .update({
+        pickup_lat: null, pickup_lon: null,
+        dropoff_lat: null, dropoff_lon: null,
+        driver_lat: null, driver_lon: null,
+        sharing: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('room_id', this.roomId.trim().toUpperCase());
+    this.clearingRoute.set(false);
+    if (error) {
+      this.gpsStatus.set(`ล้างหมุดไม่สำเร็จ: ${error.message}`);
+      return;
+    }
+    this.driverSharing.set(false);
+    this.gpsStatus.set('ล้างจุดรับ จุดส่ง และเส้นทางแล้ว');
+  }
+
+  private clearRoutePoints() {
+    if (this.pickupMarker) this.map.Overlays.remove(this.pickupMarker);
+    if (this.destinationMarker) this.map.Overlays.remove(this.destinationMarker);
+    this.pickupMarker = undefined;
+    this.destinationMarker = undefined;
+    this.pickup.set(null);
+    this.destination.set(null);
+    this.markMode.set(null);
+    this.roadDistance.set('—');
+    this.routeCalculating.set(false);
+    if (this.map?.Route) this.map.Route.clear();
   }
 
   deleteSaved(id: number) {
@@ -233,6 +270,7 @@ export class App implements OnDestroy {
   }
 
   private applyRoomState(row: any) {
+    if (this.clearingRoute()) return;
     const sharing = !!row.sharing;
     this.driverSharing.set(sharing);
     const pickup = Number.isFinite(row.pickup_lat) && Number.isFinite(row.pickup_lon) ? { lat: row.pickup_lat, lon: row.pickup_lon } : null;
@@ -240,6 +278,23 @@ export class App implements OnDestroy {
 
     if (pickup && (!this.pickup() || this.haversine(this.pickup()!, pickup) > 0.001)) this.setPickup(pickup, false);
     if (dropoff && (!this.destination() || this.haversine(this.destination()!, dropoff) > 0.001)) this.setDestination(dropoff, false);
+    if (!pickup && this.pickup()) {
+      if (this.pickupMarker) this.map.Overlays.remove(this.pickupMarker);
+      this.pickupMarker = undefined;
+      this.pickup.set(null);
+      this.renderGuide();
+    }
+    if (!dropoff && this.destination()) {
+      if (this.destinationMarker) this.map.Overlays.remove(this.destinationMarker);
+      this.destinationMarker = undefined;
+      this.destination.set(null);
+      this.renderGuide();
+    }
+    if (!pickup && !dropoff && this.role === 'passenger') {
+      this.points.set([]); this.distanceKm.set(0);
+      if (this.trackLine) this.map.Overlays.remove(this.trackLine);
+      this.trackLine = undefined;
+    }
 
     if (this.role === 'passenger') {
       if (sharing && Number.isFinite(row.driver_lat) && Number.isFinite(row.driver_lon)) {
@@ -260,7 +315,7 @@ export class App implements OnDestroy {
     this.current.set(point);
     this.distanceKm.set(this.pathDistance(this.points()));
     this.gpsStatus.set(`เห็นตำแหน่งคนขับแล้ว • แม่นยำ ±${Math.round(point.accuracy ?? 0)} ม.`);
-    this.renderUser(point); this.renderTrack(); this.renderGuide();
+    this.renderDriver(point); this.renderTrack(); this.renderGuide();
     if (this.map) this.map.location(point, true);
   }
 
@@ -281,20 +336,32 @@ export class App implements OnDestroy {
     this.current.set(point);
     this.distanceKm.set(this.pathDistance(this.points()));
     this.gpsStatus.set(`กำลังบันทึก • แม่นยำ ±${Math.round(point.accuracy ?? 0)} ม.`);
-    this.renderUser(point); this.renderTrack(); this.renderGuide();
+    this.selfLocation.set(point);
+    this.renderSelf(point); this.renderTrack(); this.renderGuide();
     this.map.location(point, true);
     this.sendRoomEvent({ type: 'location', point });
   }
 
-  private renderUser(point: Point) {
+  private renderDriver(point: Point) {
     if (!this.map) return;
     if (!this.userMarker) {
       this.userMarker = new window.longdo.Marker(point, {
-        title: 'ตำแหน่งของฉัน',
+        title: 'ตำแหน่งคนขับ',
         icon: { html: '<div class="driver-car"><span>🚘</span><i></i></div>', offset: { x: 24, y: 24 } }
       });
       this.map.Overlays.add(this.userMarker);
     } else this.userMarker.move(point, true);
+  }
+
+  private renderSelf(point: Point) {
+    if (!this.map) return;
+    if (!this.selfMarker) {
+      this.selfMarker = new window.longdo.Marker(point, {
+        title: 'ตำแหน่งของฉัน',
+        icon: { html: '<div class="self-marker"><span>ฉัน</span><i></i></div>', offset: { x: 24, y: 24 } }
+      });
+      this.map.Overlays.add(this.selfMarker);
+    } else this.selfMarker.move(point, true);
   }
 
   private renderTrack() {

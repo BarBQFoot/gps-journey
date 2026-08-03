@@ -49,7 +49,7 @@
       }
 
       @if (pickup() && destination()) {
-        <div class="route-distance"><span>ระยะจุดรับ → จุดส่ง</span><b>{{ markedDistanceKm() | number:'1.2-2' }} กม.</b></div>
+        <div class="route-distance"><span>ระยะทางขับรถตามถนน</span><b>{{ routeCalculating() ? 'กำลังคำนวณ…' : roadDistance() }}</b></div>
       }
 
       @if (pickup() || destination()) {

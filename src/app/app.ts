@@ -25,6 +25,8 @@ export class App implements OnDestroy {
   destination = signal<Point | null>(null);
   markMode = signal<'pickup' | 'dropoff' | null>(null);
   driverSharing = signal(false);
+  roadDistance = signal('—');
+  routeCalculating = signal(false);
   current = signal<Point | null>(null);
   points = signal<Point[]>([]);
   distanceKm = signal(0);
@@ -68,9 +70,15 @@ export class App implements OnDestroy {
         zoom: 15,
         location: { lon: 100.5018, lat: 13.7563 }
       });
-      this.map.Event.bind('ready', () => this.mapReady.set(true));
+      this.map.Event.bind('ready', () => {
+        this.mapReady.set(true);
+        this.map.Event.bind('guideComplete', () => {
+          this.roadDistance.set(String(this.map.Route.distance(true)));
+          this.routeCalculating.set(false);
+        });
+        this.connectRoom();
+      });
       this.map.Event.bind('click', () => this.handleMapClick());
-      this.connectRoom();
     });
   }
 
@@ -274,11 +282,17 @@ export class App implements OnDestroy {
   }
 
   private renderGuide() {
-    if (this.guideLine) this.map.Overlays.remove(this.guideLine);
-    if (this.pickup() && this.destination()) {
-      this.guideLine = new window.longdo.Polyline([this.pickup(), this.destination()], { lineColor: 'rgba(255,107,74,.85)', lineWidth: 4, lineStyle: window.longdo.LineStyle?.Dashed });
-      this.map.Overlays.add(this.guideLine);
-    }
+    if (!this.map?.Route) return;
+    this.map.Route.clear();
+    this.roadDistance.set('—');
+    if (!this.pickup() || !this.destination()) return;
+    this.routeCalculating.set(true);
+    this.map.Route.useStopMarker(false);
+    this.map.Route.mode(window.longdo.RouteMode.Traffic);
+    this.map.Route.label(window.longdo.RouteLabel.Distance);
+    this.map.Route.add(this.pickup());
+    this.map.Route.add(this.destination());
+    this.map.Route.search();
   }
 
   private fromPosition(p: GeolocationPosition): Point { return { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy, time: p.timestamp }; }

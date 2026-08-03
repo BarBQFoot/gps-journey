@@ -1,0 +1,69 @@
+@if (!keyReady()) {
+  <main class="setup">
+    <div class="setup-card">
+      <div class="brand-mark">ไป</div>
+      <p class="eyebrow">GPS JOURNEY LAB</p>
+      <h1>ออกไป แล้วเก็บทุกก้าว</h1>
+      <p class="lead">เว็บทดลองติดตาม GPS ด้วย Longdo Map ปักหมุดปลายทาง แล้วบันทึกเส้นทางจริงจากมือถือของคุณ</p>
+      <div class="role-picker" role="group" aria-label="เลือกบทบาท">
+        <button [class.selected]="role === 'driver'" (click)="role='driver'"><b>🚘 คนขับ</b><span>แชร์ตำแหน่ง GPS</span></button>
+        <button [class.selected]="role === 'passenger'" (click)="role='passenger'"><b>● ผู้โดยสาร</b><span>ดูตำแหน่งคนขับ</span></button>
+      </div>
+      <label for="room">เลข ID ห้องเดียวกัน</label>
+      <input class="room-input" id="room" [(ngModel)]="roomId" placeholder="เช่น TRIP-1234" autocomplete="off">
+      <button class="enter-room" (click)="loadMap()">เข้าห้องและเปิดแผนที่</button>
+      <p class="hint">ใช้เลข ID เดียวกันทั้งเครื่องคนขับและผู้โดยสาร</p>
+    </div>
+  </main>
+} @else {
+  <div class="app-shell">
+    <header>
+      <div class="logo"><span>ไป</span><div><strong>เส้นทางของฉัน</strong><small>LIVE GPS JOURNAL</small></div></div>
+      <div class="room-badge"><b>{{ role === 'driver' ? 'คนขับ' : 'ผู้โดยสาร' }}</b><span>ID {{ roomId }}</span></div>
+      <div class="live-pill" [class.active]="tracking() || (role === 'passenger' && !!current())"><i></i>{{ tracking() ? 'กำลังแชร์ GPS' : role === 'passenger' ? 'ติดตามคนขับ' : 'พร้อมเดินทาง' }}</div>
+    </header>
+
+    <section class="map-wrap">
+      <div id="map"></div>
+      <div class="map-tip">แตะบนแผนที่เพื่อปักหมุดปลายทาง</div>
+      <button class="locate" (click)="locateMe()" aria-label="ค้นหาตำแหน่งของฉัน">◎</button>
+      @if (!mapReady()) { <div class="loading">กำลังเตรียมแผนที่…</div> }
+    </section>
+
+    <aside class="panel">
+      <div class="status-line"><span>{{ gpsStatus() }}</span>@if(current()){<b>{{ current()!.lat.toFixed(5) }}, {{ current()!.lon.toFixed(5) }}</b>}</div>
+      <div class="stats">
+        <div><small>ระยะทาง</small><strong>{{ distanceKm() | number:'1.2-2' }}<em> กม.</em></strong></div>
+        <div><small>เวลาเดินทาง</small><strong>{{ durationText() }}</strong></div>
+        <div><small>จุด GPS</small><strong>{{ points().length }}<em> จุด</em></strong></div>
+      </div>
+
+      @if (destination() && current()) {
+        <div class="remaining"><small>ระยะตรงถึงจุดหมาย</small><strong>{{ remainingKm() | number:'1.2-2' }} <em>กม.</em></strong></div>
+      }
+
+      @if (destination()) {
+        <div class="destination"><span>★</span><div><small>จุดหมายที่เลือก</small><b>{{ destination()!.lat.toFixed(5) }}, {{ destination()!.lon.toFixed(5) }}</b></div></div>
+      }
+
+      <div class="actions">
+        @if (role === 'driver' && !tracking()) { <button class="primary" (click)="startTracking()"><span>●</span> เริ่มแชร์และบันทึก</button> }
+        @if (role === 'driver' && tracking()) { <button class="stop" (click)="stopTracking()"><span>■</span> หยุดและบันทึก</button> }
+        @if (role === 'passenger') { <div class="watching"><i></i> กำลังรับตำแหน่งจากคนขับ</div> }
+        <button class="secondary" (click)="clearTrip()">ล้างเส้นทาง</button>
+      </div>
+
+      <div class="history">
+        <div class="section-title"><h2>การเดินทางล่าสุด</h2><small>เก็บในเครื่องนี้</small></div>
+        @if (!savedTrips().length) { <div class="empty">ยังไม่มีประวัติ<br><span>เริ่มบันทึกการเดินทางแรกของคุณได้เลย</span></div> }
+        @for (trip of savedTrips(); track trip.id) {
+          <div class="trip" (click)="viewTrip(trip)">
+            <div class="trip-icon">↗</div>
+            <div><b>{{ trip.date | date:'d MMM y, HH:mm' }}</b><span>{{ trip.distance | number:'1.2-2' }} กม. • {{ trip.duration }}</span></div>
+            <button (click)="$event.stopPropagation(); deleteSaved(trip.id)" aria-label="ลบรายการ">×</button>
+          </div>
+        }
+      </div>
+    </aside>
+  </div>
+}
